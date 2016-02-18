@@ -1,0 +1,108 @@
+---
+
+# curl -s -u admin:admin http://0:15672/api/nodes/ | jq ".[].partitions[]"
+
+
+
+# Check the status of the cluster and of the node
+- name: Check cluster
+  uri:
+    url: http://0:15672/api/nodes
+    user: admin
+    password: admin
+    return_content: yes
+  register: reg_rabbitmq_nodes
+
+- name: Check node
+  uri:
+    url: "http://0:15672/api/nodes/rabbit@{{ inventory_hostname}}"
+    user: admin
+    password: admin
+    return_content: yes
+  register: reg_rabbitmq_node
+
+
+# Assert the status
+- name: Check the role parameters
+  assert:
+    that:
+    - play_hosts | length > 1
+    - reg_rabbitmq_node.json.partitions | length == 0
+
+
+- name: Get cookie on node
+  shell: cat /var/lib/rabbitmq/.erlang.cookie
+  register: reg_rabbitmq_cookie
+  changed_when: no
+
+
+# Update the cookie and restart the deamon
+## apg -a 1 -M C  -n 1 -m 20
+- name: Set cookie on nodes
+  copy:
+    content: "{{ hostvars[ play_hosts | sort | first ].reg_rabbitmq_cookie.stdout }}"
+    dest: /var/lib/rabbitmq/.erlang.cookie
+    owner: rabbitmq
+    group: rabbitmq
+    mode: 0400
+  notify:
+    - Restart rabbitmq service
+
+- name: Flush handlers
+  meta: flush_handlers
+
+
+
+# Add the node into the cluster
+- name: Stop RabbitMQ node
+  shell: rabbitmqctl stop_app
+  when: >
+    ( play_hosts | sort | first ) != inventory_hostname and
+    ( reg_rabbitmq_nodes.json | length ) == 1
+
+
+- name: Add RabbitMQ node to the cluster
+  shell: "rabbitmqctl join_cluster rabbit@{{ play_hosts | sort | first }}"
+  when: >
+    ( play_hosts | sort | first ) != inventory_hostname and
+    ( reg_rabbitmq_nodes.json | length ) == 1
+
+- name: Start RabbitMQ node into the cluster
+  shell: "rabbitmqctl start_app"
+  when: >
+    ( play_hosts | sort | first ) != inventory_hostname and
+    ( reg_rabbitmq_nodes.json | length ) == 1
+
+
+# Setup the rabbitmqadmin config
+
+- name: Update the rabbitmqadmin client (1)
+  ini_file:
+    dest: /root/.rabbitmqadmin.conf
+    state: present
+    option: "hostname"
+    value: "{{ item }}"
+    owner: root
+    mode: 600
+    section: "{{ item }}"
+  with_items:
+    - "{{ play_hosts }}"
+
+- name: Update the rabbitmqadmin client (2)
+  ini_file:
+    dest: /root/.rabbitmqadmin.conf
+    state: present
+    option: "{{ item[1].option }}"
+    value: "{{ item[1].value }}"
+    owner: root
+    mode: 600
+    section: "{{ item[0] }}"
+  with_nested:
+    - "{{ play_hosts }}"
+    - 
+      - option: username
+        value: admin
+      - option: password
+        value: admin
+      - option: port
+        value: 15672

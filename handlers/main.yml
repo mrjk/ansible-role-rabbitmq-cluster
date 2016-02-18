@@ -1,0 +1,14 @@
+---
+# handlers file for rabbitmq-base
+
+- name: Stop RabbitMQ node
+  shell: rabbitmqctl stop_app
+
+
+- name: Add RabbitMQ node to the cluster
+  shell: "rabbitmqctl join_cluster rabbit@{{ play_hosts | sort | first }}"
+
+
+- name: Start RabbitMQ node into the cluster
+  shell: "rabbitmqctl start_app"
+
